@@ -4,6 +4,11 @@ The world builtin mirrors decoded Bedrock chunks when `worldDecodeEnabled` is
 true. Entity and player builtins maintain local maps for runtime entities,
 player-list records, metadata, effects, and common player state.
 
+Set `ignoreEntities: true` when creating the bot to skip tracking remote entities
+entirely while keeping the local `bot.self` player state working. This is useful
+for packet-only or lightweight bot modes, especially when many non-player actors
+are present and you do not need a full entity simulation.
+
 ## World API
 
 | API | Purpose |

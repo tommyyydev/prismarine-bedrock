@@ -27,6 +27,10 @@ function normalizeRuntimeOptions(options = {}) {
     normalizeBooleanOption(options.worldDecodeEnabled, 'worldDecodeEnabled') ??
     true;
 
+  const ignoreEntities =
+    normalizeBooleanOption(options.ignoreEntities, 'ignoreEntities') ??
+    false;
+
   const physicsEnabled =
     normalizeBooleanOption(options.physicsEnabled, 'physicsEnabled') ??
     worldDecodeEnabled;
@@ -45,6 +49,7 @@ function normalizeRuntimeOptions(options = {}) {
     ...options,
     loggingEnabled,
     worldDecodeEnabled,
+    ignoreEntities,
     physicsEnabled,
     physicsEngine: physicsEngine === 'nxg-org' ? 'nxg' : physicsEngine
   };

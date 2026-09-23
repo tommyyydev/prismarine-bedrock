@@ -20,6 +20,16 @@ module.exports = (botState, options) => {
   const registry = botState.registry;
   const EntityClass = botState.entityClass;
   const Item = botState.itemClass;
+  const shouldTrackEntities = () => !botState.options.ignoreEntities;
+
+  function shouldIgnoreRemoteEntityUpdate (runtimeId, extraId) {
+    if (!botState.options.ignoreEntities) return false;
+    const selfId = botState.self?.runtimeId ?? botState.client?.entityId;
+    if (selfId === undefined || selfId === null) return false;
+    const ids = [runtimeId, extraId].filter(id => id !== undefined && id !== null);
+    if (ids.length === 0) return false;
+    return !ids.some(id => sameRuntimeId(id, selfId));
+  }
 
   // Live entities are split by actor kind but share Bedrock runtime ids:
   // - entities: non-player actors, dropped items, mobs, vehicles, etc.
@@ -94,6 +104,8 @@ module.exports = (botState, options) => {
 
   // ========== Remote player entities (from add_player) ==========
   botState.client.on('add_player', (packet) => {
+    if (!shouldTrackEntities()) return;
+
     const entity = new EntityClass(packet.unique_id);
     entity.runtimeId = packet.runtime_id;                  // varint64 → BigInt
     entity.username = packet.username;
@@ -122,6 +134,8 @@ module.exports = (botState, options) => {
 
   // ========== Non-player entity spawn ==========
   botState.client.on('add_entity', (packet) => {
+    if (!shouldTrackEntities()) return;
+
     const ed = lookupEntityData(packet.entity_type);
 
     const entity = new EntityClass(packet.unique_id);
@@ -157,6 +171,8 @@ module.exports = (botState, options) => {
 
   // ========== Item entity spawn ==========
   botState.client.on('add_item_entity', (packet) => {
+    if (!shouldTrackEntities()) return;
+
     const entity = new EntityClass(packet.entity_id_self);
     entity.runtimeId = packet.runtime_entity_id;           // varint64 → BigInt
     entity.position.set(packet.position.x, packet.position.y, packet.position.z);
@@ -181,6 +197,8 @@ module.exports = (botState, options) => {
 
   // ========== Remove entity ==========
   botState.client.on('remove_entity', (packet) => {
+    if (shouldIgnoreRemoteEntityUpdate(packet.runtime_entity_id, packet.entity_id_self)) return;
+
     // RemoveActor carries an entity unique ID, while the live maps are keyed by
     // runtime ID. Some third-party servers use the runtime ID in both fields,
     // so retain a runtime lookup as a compatibility fallback.
@@ -224,6 +242,7 @@ module.exports = (botState, options) => {
 
   // MoveActorAbsolute – for non‑player and player entities
   botState.client.on('move_entity', (packet) => {
+    if (shouldIgnoreRemoteEntityUpdate(packet.runtime_entity_id)) return;
     const entity = findEntityByRuntimeId(botState, packet.runtime_entity_id);
     if (!entity) return;
     entity.position.set(packet.position.x, packet.position.y, packet.position.z);
@@ -238,6 +257,7 @@ module.exports = (botState, options) => {
   // MovePlayer – runtime_id is varint (number), must convert to BigInt
   botState.client.on('move_player', (packet) => {
     const runtimeId = typeof packet.runtime_id === 'bigint' ? packet.runtime_id : BigInt(packet.runtime_id);
+    if (shouldIgnoreRemoteEntityUpdate(runtimeId, botState.self?.runtimeId)) return;
     const entity = findEntityByRuntimeId(botState, runtimeId);
     if (!entity) return;
     entity.position.set(packet.position.x, packet.position.y, packet.position.z);
@@ -249,6 +269,7 @@ module.exports = (botState, options) => {
 
   // MoveActorDelta – efficient delta update
   botState.client.on('move_entity_delta', (packet) => {
+    if (shouldIgnoreRemoteEntityUpdate(packet.runtime_entity_id)) return;
     const entity = findEntityByRuntimeId(botState, packet.runtime_entity_id);
     if (!entity) return;
 
@@ -271,6 +292,7 @@ module.exports = (botState, options) => {
 
   // MotionPredictionHints – velocity update from server
   botState.client.on('motion_prediction_hints', (packet) => {
+    if (shouldIgnoreRemoteEntityUpdate(packet.entity_runtime_id)) return;
     const entity = findEntityByRuntimeId(botState, packet.entity_runtime_id);
     if (!entity) return;
     entity.velocity.set(packet.velocity.x, packet.velocity.y, packet.velocity.z);
@@ -301,18 +323,21 @@ module.exports = (botState, options) => {
 
   // ========== Data & Motion ==========
   botState.client.on('set_entity_data', (packet) => {
+    if (shouldIgnoreRemoteEntityUpdate(packet.runtime_entity_id)) return;
     const entity = findEntityByRuntimeId(botState, packet.runtime_entity_id);
     if (!entity) return;
     applyEntityMetadata(entity, packet.metadata);
   });
 
   botState.client.on('set_entity_motion', (packet) => {
+    if (shouldIgnoreRemoteEntityUpdate(packet.runtime_entity_id)) return;
     const entity = findEntityByRuntimeId(botState, packet.runtime_entity_id);
     if (!entity) return;
     entity.velocity.set(packet.velocity.x, packet.velocity.y, packet.velocity.z);
   });
 
   botState.client.on('entity_event', (packet) => {
+    if (shouldIgnoreRemoteEntityUpdate(packet.runtime_entity_id)) return;
     const entity = findEntityByRuntimeId(botState, packet.runtime_entity_id);
     if (!entity) return;
     botState.logAction?.('[→]', 'entity_event', { id: packet.runtime_entity_id, event: packet.event_id });
@@ -321,6 +346,7 @@ module.exports = (botState, options) => {
 
   botState.client.on('player_action', (packet) => {
     const runtimeId = packet.runtime_entity_id ?? packet.runtime_id;
+    if (shouldIgnoreRemoteEntityUpdate(runtimeId, packet.target_runtime_id ?? packet.target)) return;
     const entity = runtimeId === undefined ? botState.self : findEntityByRuntimeId(botState, runtimeId);
     if (!entity) return;
 
@@ -384,6 +410,7 @@ module.exports = (botState, options) => {
   });
 
   botState.client.on('update_attributes', (packet) => {
+    if (shouldIgnoreRemoteEntityUpdate(packet.runtime_entity_id)) return;
     const entity = findEntityByRuntimeId(botState, packet.runtime_entity_id);
     if (!entity) return;
     applyAttributes(entity, packet.attributes);
@@ -418,6 +445,7 @@ module.exports = (botState, options) => {
   });
 
   botState.client.on('mob_effect', (packet) => {
+    if (shouldIgnoreRemoteEntityUpdate(packet.runtime_entity_id)) return;
     const entity = findEntityByRuntimeId(botState, packet.runtime_entity_id);
     if (!entity) return;
     applyMobEffect(entity, packet);
@@ -426,6 +454,7 @@ module.exports = (botState, options) => {
 
   botState.client.on('movement_effect', (packet) => {
     const runtimeId = packet.runtime_id ?? packet.runtime_entity_id;
+    if (shouldIgnoreRemoteEntityUpdate(runtimeId)) return;
     const entity = findEntityByRuntimeId(botState, runtimeId);
     if (!entity) return;
 
